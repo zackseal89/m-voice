@@ -1,36 +1,39 @@
 import React, { useEffect, useState } from 'react';
 import { DarkTheme, DefaultTheme, ThemeProvider as NavThemeProvider } from '@react-navigation/native';
 import { useFonts } from 'expo-font';
-import { Stack, useRouter } from 'expo-router'; // Using Stack for auth and main layout
+import { Stack, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useColorScheme } from 'react-native'; // Removed View, Text, Button
+import { useColorScheme } from 'react-native';
 import 'react-native-reanimated';
 
+// Import Space Mono font from expo-google-fonts
+import {
+  SpaceMono_400Regular,
+} from '@expo-google-fonts/space-mono';
+
 // Import your auth service and user type
-import { onAuthUserChanged } from '../src/services/authService'; // Adjust path, removed signInWithEmail, signUpWithEmail
-import type { User as FirebaseUser } from 'firebase/auth'; // Or your custom AuthUser
+import { onAuthUserChanged } from '../src/services/authService';
+import type { User as FirebaseUser } from 'firebase/auth';
 
-import { useFrameworkReady } from '@/hooks/useFrameworkReady'; // CRITICAL: Keep this hook
-import { ThemeProvider } from '@/hooks/useTheme'; // Custom ThemeProvider
+import { useFrameworkReady } from '@/hooks/useFrameworkReady';
+import { ThemeProvider } from '@/hooks/useTheme';
 import { StatusBar } from 'expo-status-bar';
-
-// LoginScreenPlaceholder component is now in app/signIn.tsx
 
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
-  const [loadedFonts] = useFonts({ // Renamed to loadedFonts to avoid conflict
-    SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'), // Assuming this path is correct
+  const [loadedFonts] = useFonts({
+    SpaceMono: SpaceMono_400Regular,
   });
 
-  const frameworkReady = useFrameworkReady(); // CRITICAL: Keep this hook
+  const frameworkReady = useFrameworkReady();
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [authLoaded, setAuthLoaded] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
-    if (loadedFonts && frameworkReady) { // Ensure fonts and framework are ready
+    if (loadedFonts && frameworkReady) {
       SplashScreen.hideAsync();
     }
   }, [loadedFonts, frameworkReady]);
@@ -49,23 +52,19 @@ export default function RootLayout() {
         // router.replace('/signIn'); // We will render signIn screen conditionally
       }
     });
-    return () => unsubscribe(); // Cleanup subscription on unmount
+    return () => unsubscribe();
   }, []);
 
-  if (!loadedFonts || !frameworkReady || !authLoaded) { // Wait for fonts, framework, and auth state
-    return null; // Or a loading indicator
+  if (!loadedFonts || !frameworkReady || !authLoaded) {
+    return null;
   }
 
   return (
-    <ThemeProvider> {/* Your custom ThemeProvider */}
+    <ThemeProvider>
       <NavThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
         {user ? (
           // User is authenticated, show main app navigator
-          // The existing Stack setup will handle routes inside (app) or other defined routes
           <Stack screenOptions={{ headerShown: false }}>
-            {/* Example: if your main content is in an (app) group */}
-            {/* <Stack.Screen name="(app)" options={{ headerShown: false }} /> */}
-            {/* Or if you have specific screens at the root for authenticated users */}
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
             <Stack.Screen name="+not-found" />
           </Stack>
@@ -73,12 +72,9 @@ export default function RootLayout() {
           // User is not authenticated, show Login/Auth navigator
           <Stack>
             <Stack.Screen
-              name="signIn" // This will now be handled by app/signIn.tsx
+              name="signIn"
               options={{ title: 'Sign In' }}
             />
-            {/* You would add a "signUp" screen component here as well, e.g. app/signUp.tsx
-            <Stack.Screen name="signUp" options={{ title: 'Sign Up' }} />
-            */}
           </Stack>
         )}
         <StatusBar style="auto" />
@@ -86,7 +82,3 @@ export default function RootLayout() {
     </ThemeProvider>
   );
 }
-
-// The signIn screen is now handled by `app/signIn.tsx`.
-// The (tabs) route implies a `(tabs)` directory for tab-based navigation.
-// The `+not-found` screen should be correctly placed.
