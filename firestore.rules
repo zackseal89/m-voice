@@ -1,0 +1,91 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Rules for the 'clients' collection (from previous step)
+    match /clients/{clientId} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid
+                       && request.resource.data.name is string;
+      allow read, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null && resource.data.userId == request.auth.uid
+                       && request.resource.data.userId == resource.data.userId;
+    }
+
+    // Rules for the 'invoices' collection
+    match /invoices/{invoiceId} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid
+                       && request.resource.data.clientId is string
+                       && request.resource.data.items is list
+                       && request.resource.data.status is string && request.resource.data.status in ['draft', 'sent', 'paid', 'overdue', 'cancelled']
+                       && request.resource.data.issueDate is timestamp
+                       && request.resource.data.dueDate is timestamp
+                       && request.resource.data.subtotal is number
+                       && request.resource.data.taxAmount is number
+                       && request.resource.data.total is number
+                       && request.resource.data.invoiceNumber is string;
+      allow read, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null && resource.data.userId == request.auth.uid
+                       && request.resource.data.userId == resource.data.userId // Prevent changing userId
+                       // Prevent changing invoiceNumber if it already exists and is a string
+                       && (request.resource.data.invoiceNumber == resource.data.invoiceNumber || !(resource.data.invoiceNumber is string))
+                       && request.resource.data.clientId is string
+                       && request.resource.data.items is list
+                       && request.resource.data.status is string && request.resource.data.status in ['draft', 'sent', 'paid', 'overdue', 'cancelled'];
+    }
+
+    // Rules for the 'payments' collection
+    match /payments/{paymentId} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid
+                       && request.resource.data.invoiceId is string
+                       && request.resource.data.amount is number && request.resource.data.amount > 0
+                       && request.resource.data.currency is string // Consider checking specific currency codes if needed
+                       && request.resource.data.method is string && request.resource.data.method in ['M-Pesa', 'Bank', 'Cash']
+                       && request.resource.data.status is string && request.resource.data.status in ['pending', 'completed', 'failed', 'cancelled']
+                       && request.resource.data.transactionDate is timestamp
+                       // stkPushDetails is optional, but if present, it must be a map.
+                       // Also check sub-fields of stkPushDetails for basic integrity if it's present.
+                       && (request.resource.data.stkPushDetails == null ||
+                           (request.resource.data.stkPushDetails is map
+                           // && request.resource.data.stkPushDetails.checkoutRequestId is string // Example sub-field check
+                           // && request.resource.data.stkPushDetails.status is string // Example sub-field check
+                           ))
+                       // Ensure createdAt and updatedAt are server timestamps or provided by a trusted source (like here, client sets them)
+                       && request.resource.data.createdAt is timestamp
+                       && request.resource.data.updatedAt is timestamp;
+
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+
+      // Allow update if the user is the owner.
+      // Specific fields that can be updated should be considered.
+      allow update: if request.auth != null && resource.data.userId == request.auth.uid
+                       // Immutable fields after creation:
+                       && request.resource.data.userId == resource.data.userId
+                       && request.resource.data.invoiceId == resource.data.invoiceId
+                       && request.resource.data.amount == resource.data.amount // Amount typically shouldn't change post-creation
+                       && request.resource.data.currency == resource.data.currency // Currency also shouldn't change
+                       && request.resource.data.method == resource.data.method // Method also shouldn't change
+                       && request.resource.data.createdAt == resource.data.createdAt // createdAt is immutable
+                       // Mutable fields type checks & validation:
+                       && request.resource.data.status is string && request.resource.data.status in ['pending', 'completed', 'failed', 'cancelled']
+                       && (request.resource.data.stkPushDetails == null ||
+                           (request.resource.data.stkPushDetails is map
+                           // && request.resource.data.stkPushDetails.status is string // Example sub-field check for updates
+                           ))
+                       && request.resource.data.updatedAt is timestamp // Ensure updatedAt is a timestamp
+                       && (request.resource.data.notes == null || request.resource.data.notes is string)
+                       && (request.resource.data.reference == null || request.resource.data.reference is string);
+
+      // Deletion of payments is often discouraged.
+      // For now, allow delete by owner if status is perhaps 'cancelled' or 'failed'.
+      // Or, simply allow delete by owner as per initial instruction.
+      allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+
+    // Catch-all for other collections
+    // WARNING: This is very permissive for any collections not explicitly defined.
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
