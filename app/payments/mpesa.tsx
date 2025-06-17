@@ -9,8 +9,8 @@ import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import { mockInvoices } from '@/services/mockData';
+import { initiateSTKPush, checkPaymentStatus, validatePhoneNumber, generateAccountReference } from '@/src/services/mpesaService';
 import { X, Smartphone, CircleCheck as CheckCircle, CircleAlert as AlertCircle, Clock, RefreshCw } from 'lucide-react-native';
-import QRCode from 'react-native-qrcode-svg';
 
 type PaymentStatus = 'idle' | 'initiating' | 'pending' | 'success' | 'failed' | 'cancelled';
 
@@ -22,8 +22,10 @@ export default function MPesaPaymentScreen() {
   const { invoiceId } = useLocalSearchParams();
   const [phone, setPhone] = useState('');
   const [status, setStatus] = useState<PaymentStatus>('idle');
-  const [transactionId, setTransactionId] = useState('');
+  const [paymentId, setPaymentId] = useState('');
+  const [checkoutRequestId, setCheckoutRequestId] = useState('');
   const [countdown, setCountdown] = useState(120); // 2 minutes
+  const [customerMessage, setCustomerMessage] = useState('');
 
   const invoice = mockInvoices.find(i => i.id === invoiceId);
 
@@ -39,33 +41,39 @@ export default function MPesaPaymentScreen() {
     return () => clearTimeout(timer);
   }, [status, countdown]);
 
+  // Poll payment status when pending
+  useEffect(() => {
+    let pollInterval: NodeJS.Timeout;
+    
+    if (status === 'pending' && paymentId) {
+      pollInterval = setInterval(async () => {
+        try {
+          const statusResponse = await checkPaymentStatus(paymentId);
+          
+          if (statusResponse.status === 'completed') {
+            setStatus('success');
+          } else if (statusResponse.status === 'failed' || statusResponse.status === 'cancelled') {
+            setStatus('failed');
+          }
+        } catch (error) {
+          console.error('Error polling payment status:', error);
+        }
+      }, 3000); // Poll every 3 seconds
+    }
+
+    return () => {
+      if (pollInterval) {
+        clearInterval(pollInterval);
+      }
+    };
+  }, [status, paymentId]);
+
   const formatCurrency = (amount: number) => {
     return `KES ${amount.toLocaleString()}`;
   };
 
-  const formatPhone = (phoneNumber: string) => {
-    // Remove any non-digit characters
-    const cleaned = phoneNumber.replace(/\D/g, '');
-    
-    // Format for Kenyan numbers
-    if (cleaned.startsWith('254')) {
-      return cleaned;
-    } else if (cleaned.startsWith('0')) {
-      return '254' + cleaned.substring(1);
-    } else if (cleaned.length === 9) {
-      return '254' + cleaned;
-    }
-    
-    return cleaned;
-  };
-
-  const validatePhone = (phoneNumber: string) => {
-    const formatted = formatPhone(phoneNumber);
-    return formatted.length === 12 && formatted.startsWith('254');
-  };
-
-  const initiateStkPush = async () => {
-    if (!validatePhone(phone)) {
+  const initiateMpesaPayment = async () => {
+    if (!validatePhoneNumber(phone)) {
       Alert.alert('Invalid Phone Number', 'Please enter a valid Kenyan phone number');
       return;
     }
@@ -77,28 +85,38 @@ export default function MPesaPaymentScreen() {
 
     setStatus('initiating');
     
-    // Simulate API call delay
-    setTimeout(() => {
-      const mockTransactionId = `MPX${Date.now()}`;
-      setTransactionId(mockTransactionId);
-      setStatus('pending');
-      setCountdown(120);
+    try {
+      const accountReference = generateAccountReference(invoice.number);
       
-      // Simulate random success/failure after some time
-      setTimeout(() => {
-        const randomOutcome = Math.random();
-        if (randomOutcome > 0.3) { // 70% success rate
-          setStatus('success');
-        } else {
-          setStatus('failed');
-        }
-      }, Math.random() * 15000 + 5000); // Random between 5-20 seconds
-    }, 2000);
+      const response = await initiateSTKPush({
+        invoiceId: invoice.id,
+        amount: invoice.total,
+        phoneNumber: phone,
+        accountReference,
+        transactionDesc: `Payment for ${invoice.number}`,
+      });
+
+      if (response.success) {
+        setPaymentId(response.paymentId);
+        setCheckoutRequestId(response.checkoutRequestId);
+        setCustomerMessage(response.customerMessage);
+        setStatus('pending');
+        setCountdown(120);
+      } else {
+        throw new Error('Failed to initiate payment');
+      }
+    } catch (error) {
+      console.error('Payment initiation error:', error);
+      setStatus('failed');
+      Alert.alert('Payment Error', 'Failed to initiate M-Pesa payment. Please try again.');
+    }
   };
 
   const handleRetry = () => {
     setStatus('idle');
-    setTransactionId('');
+    setPaymentId('');
+    setCheckoutRequestId('');
+    setCustomerMessage('');
     setCountdown(120);
   };
 
@@ -147,12 +165,17 @@ export default function MPesaPaymentScreen() {
               <View style={styles.pulseAnimation} />
             </View>
             <Text style={[themedTypography.h3, { marginTop: Spacing.md }]}>Payment Pending</Text>
-            <Text style={themedTypography.bodySmall}>
-              Check your phone for M-Pesa prompt
+            <Text style={[themedTypography.bodySmall, { textAlign: 'center', marginHorizontal: Spacing.lg }]}>
+              {customerMessage || 'Check your phone for M-Pesa prompt'}
             </Text>
             <Text style={[themedTypography.h4, { color: colors.warning, marginTop: Spacing.sm }]}>
               Time remaining: {formatTime(countdown)}
             </Text>
+            {checkoutRequestId && (
+              <Text style={[themedTypography.caption, { marginTop: Spacing.sm, color: colors.textLight }]}>
+                Request ID: {checkoutRequestId}
+              </Text>
+            )}
           </View>
         );
       
@@ -166,9 +189,11 @@ export default function MPesaPaymentScreen() {
             <Text style={themedTypography.bodySmall}>
               Payment received successfully
             </Text>
-            <Text style={[themedTypography.caption, { marginTop: Spacing.sm }]}>
-              Transaction ID: {transactionId}
-            </Text>
+            {paymentId && (
+              <Text style={[themedTypography.caption, { marginTop: Spacing.sm }]}>
+                Payment ID: {paymentId}
+              </Text>
+            )}
           </View>
         );
       
@@ -236,7 +261,7 @@ export default function MPesaPaymentScreen() {
                 </View>
                 <View>
                   <Text style={[themedTypography.h3, { color: colors.mpesaGreen }]}>M-Pesa</Text>
-                  <Text style={themedTypography.bodySmall}>Pay with M-Pesa</Text>
+                  <Text style={themedTypography.bodySmall}>Pay with M-Pesa STK Push</Text>
                 </View>
               </View>
             </Card>
@@ -256,24 +281,6 @@ export default function MPesaPaymentScreen() {
               />
               <Text style={themedTypography.caption}>
                 Enter the phone number registered with M-Pesa
-              </Text>
-            </Card>
-
-            {/* QR Code Alternative */}
-            <Card style={styles.qrCard}>
-              <Text style={[themedTypography.h4, { marginBottom: Spacing.md, textAlign: 'center' }]}>
-                Or Scan QR Code
-              </Text>
-              <View style={styles.qrContainer}>
-                <QRCode
-                  value={`mpesa://pay?amount=${invoice.total}&reference=${invoice.number}&business=123456`}
-                  size={120}
-                  color={colors.text}
-                  backgroundColor={colors.surface}
-                />
-              </View>
-              <Text style={[themedTypography.caption, { textAlign: 'center', marginTop: Spacing.sm }]}>
-                Scan with M-Pesa app
               </Text>
             </Card>
           </>
@@ -298,8 +305,8 @@ export default function MPesaPaymentScreen() {
             />
             <Button
               title="Pay Now"
-              onPress={initiateStkPush}
-              disabled={!validatePhone(phone)}
+              onPress={initiateMpesaPayment}
+              disabled={!validatePhoneNumber(phone)}
               style={{ flex: 2, marginLeft: Spacing.sm }}
             />
           </>
@@ -391,13 +398,6 @@ const createStyles = (colors: any) => StyleSheet.create({
   },
   inputCard: {
     marginBottom: Spacing.lg,
-  },
-  qrCard: {
-    marginBottom: Spacing.lg,
-  },
-  qrContainer: {
-    alignItems: 'center',
-    marginVertical: Spacing.md,
   },
   statusCard: {
     flex: 1,

@@ -27,3 +27,7 @@ export const auth = getAuth(app);
 // Initialize and export Firestore
 import { getFirestore } from "firebase/firestore";
 export const db = getFirestore(app);
+
+// Initialize and export Functions
+import { getFunctions } from "firebase/functions";
+export const functions = getFunctions(app);
